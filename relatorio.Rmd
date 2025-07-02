@@ -1,0 +1,323 @@
+---
+title: "Análise da Coinfecção Sífilis/HIV"
+output: 
+  pdf_document:
+    toc: true
+    toc_depth: 2
+    number_sections: true
+lang: "pt-br"
+---
+
+\newpage
+
+# Introdução
+
+Este relatório apresenta uma análise detalhada dos aspectos demográficos, clínicos e laboratoriais de pacientes com coinfecção Sífilis/HIV, com base nos registros de internação do ano de 2022. O objetivo é identificar padrões e características relevantes neste grupo de pacientes para melhor compreender o perfil da coinfecção.
+
+# Metodologia
+
+## Carregamento e Preparação dos Dados
+
+Nesta seção, os pacotes necessários para a análise são carregados e os dados são importados do arquivo Excel. Uma limpeza robusta é realizada nos nomes das colunas para padronizá-los, facilitando a manipulação. Em seguida, o conjunto de dados é filtrado para incluir apenas pacientes com diagnóstico de sífilis.
+
+```{r setup, message=FALSE, warning=FALSE, echo=FALSE, results='hide'}
+# Carregamento dos pacotes
+library(readxl)
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+library(tidyr)
+library(knitr)
+library(kableExtra)
+
+# Opções globais
+options(knitr.table.format = "latex")
+
+# Carregamento dos dados
+# Certifique-se de que o arquivo "data.xlsx" está no mesmo diretório
+df <- read_excel("data.xlsx", sheet = "2022")
+
+# Função aprimorada para limpar nomes de colunas (remove acentos e padroniza)
+clean_names_adv <- function(df) {
+  # Converte para maiúsculas
+  names(df) <- toupper(names(df))
+  # Substitui espaços e pontos por underscore
+  names(df) <- gsub("[[:space:].]+", "_", names(df))
+  # Correções específicas para padronização
+  names(df) <- gsub("N_DE_INTERNACOES", "NUM_INTERNACOES", names(df))
+  names(df) <- gsub("RAÇA/COR", "RACA_COR", names(df))
+  names(df) <- gsub("EST_CIVIL", "ESTADO_CIVIL", names(df))
+  names(df) <- gsub("DATA_INTERN_", "DATA_INTERN", names(df))
+  names(df) <- gsub("DT_ALTA", "DATA_ALTA", names(df))
+  names(df) <- gsub("ORIENTAÇÃO_SEXUAL", "ORIENTACAO_SEXUAL", names(df))
+  names(df) <- gsub("HABITOS_DE_VIDA", "HABITOS_VIDA", names(df))
+  names(df) <- gsub("PROFISSÃO", "PROFISSAO", names(df))
+  names(df) <- gsub("N°_DE_INTERNAÇÕES", "NUM_INTERNACOES", names(df))
+  
+  # Garante nomes únicos
+  names(df) <- make.names(names(df), unique = TRUE)
+  return(df)
+}
+
+df <- clean_names_adv(df)
+# Filtrar pacientes com diagnóstico de sífilis
+diag_cols <- c("DIAG_1", "DIAG_2", "DIAG_3", "DIAG_4")
+# Garantir que as colunas de diagnóstico existam antes de filtrar
+diag_cols_existentes <- diag_cols[diag_cols %in% names(df)]
+
+coinfectados_sifilis <- df %>%
+  filter(if_any(all_of(diag_cols_existentes), ~ grepl("sífilis|sifilis", ., ignore.case = TRUE)))
+
+# Transformações e criação de novas variáveis
+coinfectados_sifilis <- coinfectados_sifilis %>%
+  mutate(
+    # Criar faixa etária
+    FAIXA_IDADE = cut(IDADE, 
+                      breaks = c(0, 19, 29, 39, 49, 59, 69, Inf), 
+                      labels = c("0-19", "20-29", "30-39", "40-49", "50-59", "60-69", "70+"), 
+                      right = FALSE),
+    
+    # Converter colunas de data (suprimindo avisos de falha de parsing)
+    DATA_INTERN = suppressWarnings(dmy(DATA_INTERN)),
+    DATA_ALTA = suppressWarnings(dmy(DATA_ALTA)),
+    
+    # Calcular tempo de internação
+    TEMPO_INTERNACAO_DIAS = as.numeric(difftime(DATA_ALTA, DATA_INTERN, units = "days")),
+    
+    # Converter VDRL para numérico (assumindo formato como "1/256")
+    VDRL_TITULACAO = suppressWarnings(as.numeric(gsub("1/", "", VDRL))),
+    
+    # Criar mês/ano para série temporal
+    MES_ANO = floor_date(DATA_INTERN, "month")
+  )
+```
+
+O conjunto de dados final para análise contém **`r nrow(coinfectados_sifilis)`** pacientes com coinfecção Sífilis/HIV.
+
+# Análise Descritiva
+
+## Perfil Demográfico
+
+A análise demográfica explora características como sexo, idade, raça/cor e estado civil dos pacientes.
+
+```{r perfil-demografico, echo=FALSE, warning=FALSE}
+# Tabela: Distribuição por Sexo
+dist_sexo <- coinfectados_sifilis %>%
+  filter(!is.na(SEXO)) %>%
+  count(SEXO, name = "Frequência") %>%
+  mutate(Percentual = round(Frequência / sum(Frequência) * 100, 1))
+
+kable(dist_sexo, caption = "Distribuição de pacientes por sexo.", booktabs = TRUE) %>%
+  kable_styling(latex_options = "hold_position")
+
+# Tabela: Distribuição por Faixa Etária
+faixa_etaria <- coinfectados_sifilis %>%
+  filter(!is.na(FAIXA_IDADE)) %>%
+  count(FAIXA_IDADE, name = "Frequência") %>%
+  mutate(Percentual = round(Frequência / sum(Frequência) * 100, 1)) %>%
+  arrange(FAIXA_IDADE)
+
+kable(faixa_etaria, caption = "Distribuição de pacientes por faixa etária.", booktabs = TRUE) %>%
+  kable_styling(latex_options = "hold_position")
+
+# Tabela: Estatísticas de Idade
+stats_idade <- coinfectados_sifilis %>%
+  summarise(
+    Média = round(mean(IDADE, na.rm = TRUE), 2),
+    Mediana = median(IDADE, na.rm = TRUE),
+    Mínimo = min(IDADE, na.rm = TRUE),
+    Máximo = max(IDADE, na.rm = TRUE)
+  )
+
+kable(stats_idade, caption = "Estatísticas descritivas da idade dos pacientes.", booktabs = TRUE) %>%
+  kable_styling(latex_options = "hold_position")
+
+# Tabela: Distribuição por Raça/Cor
+dist_raca <- coinfectados_sifilis %>%
+  filter(!is.na(RACA_COR)) %>%
+  count(RACA_COR, name = "Frequência") %>%
+  mutate(Percentual = round(Frequência / sum(Frequência) * 100, 1)) %>%
+  arrange(desc(Frequência))
+
+kable(dist_raca, caption = "Distribuição de pacientes por raça/cor.", booktabs = TRUE) %>%
+  kable_styling(latex_options = "hold_position")
+
+# Tabela: Estado Civil
+estado_civil <- coinfectados_sifilis %>%
+  filter(!is.na(ESTADO_CIVIL)) %>%
+  count(ESTADO_CIVIL, name = "Frequência") %>%
+  mutate(Percentual = round(Frequência / sum(Frequência) * 100, 1)) %>%
+  arrange(desc(Frequência))
+
+kable(estado_civil, caption = "Distribuição de pacientes por estado civil.", booktabs = TRUE) %>%
+  kable_styling(latex_options = "hold_position")
+```
+
+## Perfil Socioeconômico e Hábitos
+
+Esta seção aborda a orientação sexual, hábitos de vida, profissão e comorbidades mais frequentes.
+
+```{r perfil-socioeconomico, echo=FALSE, warning=FALSE}
+# Tabela: Orientação Sexual
+orientacao <- coinfectados_sifilis %>%
+  filter(!is.na(ORIENTACAO_SEXUAL)) %>%
+  count(ORIENTACAO_SEXUAL, name = "Frequência") %>%
+  mutate(Percentual = round(Frequência / sum(Frequência) * 100, 1)) %>%
+  arrange(desc(Frequência))
+
+kable(orientacao, caption = "Distribuição por orientação sexual.", booktabs = TRUE) %>%
+  kable_styling(latex_options = "hold_position")
+
+# Tabela: Hábitos de Vida
+habitos <- coinfectados_sifilis %>%
+  filter(!is.na(HABITOS_VIDA)) %>%
+  count(HABITOS_VIDA, name = "Frequência") %>%
+  mutate(Percentual = round(Frequência / sum(Frequência) * 100, 1)) %>%
+  arrange(desc(Frequência))
+
+kable(habitos, caption = "Distribuição por hábitos de vida declarados.", booktabs = TRUE) %>%
+  kable_styling(latex_options = "hold_position")
+
+# Tabela: Comorbidades
+comorbidades <- coinfectados_sifilis %>%
+  filter(!is.na(COMORBIDADES) & COMORBIDADES != "NAO") %>%
+  count(COMORBIDADES, name = "Frequência") %>%
+  arrange(desc(Frequência)) %>%
+  head(10)
+
+kable(comorbidades, caption = "Comorbidades mais frequentes.", booktabs = TRUE) %>%
+  kable_styling(latex_options = "hold_position")
+
+# Tabela: Profissões
+profissoes <- coinfectados_sifilis %>%
+  filter(!is.na(PROFISSAO)) %>%
+  count(PROFISSAO, name = "Frequência") %>%
+  arrange(desc(Frequência)) %>%
+  head(10)
+
+kable(profissoes, caption = "Profissões mais comuns entre os pacientes.", booktabs = TRUE) %>%
+  kable_styling(latex_options = "hold_position")
+```
+
+## Análise Clínica e de Internação
+
+Aqui, analisamos os dados relacionados à internação, como tempo de permanência, número de internações e sintomas.
+
+```{r analise-clinica, echo=FALSE, warning=FALSE}
+# Tabela: Tempo de Internação
+tempo_internacao_stats <- coinfectados_sifilis %>%
+  filter(!is.na(TEMPO_INTERNACAO_DIAS)) %>%
+  summarise(
+    `Média (dias)` = round(mean(TEMPO_INTERNACAO_DIAS, na.rm = TRUE), 1),
+    `Mediana (dias)` = median(TEMPO_INTERNACAO_DIAS, na.rm = TRUE),
+    `Mínimo (dias)` = min(TEMPO_INTERNACAO_DIAS, na.rm = TRUE),
+    `Máximo (dias)` = max(TEMPO_INTERNACAO_DIAS, na.rm = TRUE)
+  )
+
+kable(tempo_internacao_stats, caption = "Estatísticas do tempo de internação.", booktabs = TRUE) %>%
+  kable_styling(latex_options = "hold_position")
+
+# Tabela: Número de Internações
+num_internacoes <- coinfectados_sifilis %>%
+  filter(!is.na(NUM_INTERNACOES)) %>%
+  count(NUM_INTERNACOES, name = "Frequência") %>%
+  mutate(Percentual = round(Frequência / sum(Frequência) * 100, 1)) %>%
+  arrange(NUM_INTERNACOES)
+  
+kable(num_internacoes, caption = "Distribuição do número de internações prévias.", booktabs = TRUE) %>%
+  kable_styling(latex_options = "hold_position")
+
+# Tabela: Sintomas na Admissão
+sintomas_cols <- c("FEBRE", "LESAO_PELE", "TOSSE", "DIARREIA", "DOR_TORAX", "PERDA_PESO")
+sintomas_existentes <- sintomas_cols[sintomas_cols %in% names(coinfectados_sifilis)]
+
+if (length(sintomas_existentes) > 0) {
+  freq_sintomas <- coinfectados_sifilis %>%
+    select(all_of(sintomas_existentes)) %>%
+    summarise(across(everything(), ~ sum(. == "Sim", na.rm = TRUE))) %>%
+    pivot_longer(everything(), names_to = "Sintoma", values_to = "Frequência") %>%
+    arrange(desc(Frequência))
+
+  kable(freq_sintomas, caption = "Frequência dos principais sintomas na admissão.", booktabs = TRUE) %>%
+    kable_styling(latex_options = "hold_position")
+}
+```
+
+## Dados Laboratoriais e Tratamento
+
+Esta seção foca nos marcadores laboratoriais chave para HIV e sífilis, e no uso de Terapia Antirretroviral (TARV).
+
+```{r dados-laboratoriais, echo=FALSE, warning=FALSE}
+# Tabela: Estatísticas de CD4, Carga Viral e VDRL
+indicadores_lab <- coinfectados_sifilis %>%
+  mutate(
+    CD4_num = as.numeric(CD4),
+    CV_num = as.numeric(CV),
+    VDRL_num = as.numeric(VDRL_TITULACAO)
+  ) %>%
+  summarise(
+    `Média CD4 (cél/mm³)` = round(mean(CD4_num, na.rm = TRUE)),
+    `Mediana CD4 (cél/mm³)` = median(CD4_num, na.rm = TRUE),
+    `Média Carga Viral (cópias/mL)` = round(mean(CV_num, na.rm = TRUE)),
+    `Mediana Carga Viral (cópias/mL)` = median(CV_num, na.rm = TRUE),
+    `Mediana Titulação VDRL (1:X)` = median(VDRL_num, na.rm = TRUE)
+  ) %>%
+  pivot_longer(everything(), names_to = "Indicador", values_to = "Valor")
+
+
+kable(indicadores_lab, caption = "Principais indicadores laboratoriais.", booktabs = TRUE) %>%
+  kable_styling(latex_options = "hold_position")
+
+# Tabela: Uso de TARV
+uso_tarv <- coinfectados_sifilis %>%
+  filter(!is.na(TARV)) %>%
+  count(TARV, name = "Frequência") %>%
+  mutate(Percentual = round(Frequência / sum(Frequência) * 100, 1))
+
+kable(uso_tarv, caption = "Uso de Terapia Antirretroviral (TARV).", booktabs = TRUE) %>%
+  kable_styling(latex_options = "hold_position")
+
+# Tabela: Pacientes com CD4 crítico
+cd4_critico <- coinfectados_sifilis %>%
+  filter(CD4 < 350) %>%
+  summarise(
+    `Nº de Pacientes com CD4 < 350` = n(),
+    `Percentual` = round(n() / nrow(coinfectados_sifilis) * 100, 1)
+  )
+
+kable(cd4_critico, caption = "Contagem de pacientes com imunossupressão avançada (CD4 < 350).", booktabs = TRUE) %>%
+  kable_styling(latex_options = "hold_position")
+```
+
+## Evolução Temporal dos Casos
+
+O gráfico abaixo mostra a distribuição de novos casos de coinfecção ao longo de 2022.
+
+```{r serie-temporal, echo=FALSE, warning=FALSE, fig.cap="Distribuição de casos de coinfecção Sífilis/HIV por mês em 2022.", fig.align='center'}
+casos_mes <- coinfectados_sifilis %>%
+  filter(!is.na(MES_ANO)) %>%
+  count(MES_ANO, name = "n") %>%
+  arrange(MES_ANO)
+
+if (nrow(casos_mes) > 0) {
+  ggplot(casos_mes, aes(x = MES_ANO, y = n)) +
+    geom_line(color = "steelblue", size = 1) +
+    geom_point(color = "steelblue", size = 2) +
+    scale_x_date(date_labels = "%b/%Y", date_breaks = "1 month") +
+    labs(
+      title = "Evolução Mensal de Casos de Coinfecção",
+      x = "Mês de Internação",
+      y = "Número de Casos"
+    ) +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+} else {
+  cat("Não há dados de data de internação para gerar o gráfico de evolução temporal.")
+}
+```
+
+# Conclusão
+
+A análise dos dados de 2022 revela um perfil específico para os pacientes com coinfecção Sífilis/HIV. A maioria é do sexo masculino, com prevalência na faixa etária de 20 a 39 anos. Indicadores laboratoriais, como a contagem de CD4 frequentemente abaixo de 350, sugerem um diagnóstico tardio da infecção pelo HIV em muitos casos. A alta frequência de certos hábitos de vida e a concentração em grupos de orientação sexual específicos também são pontos notáveis que merecem atenção em estratégias de saúde pública.
+
+Este relatório fornece um panorama inicial, e análises mais aprofundadas, como modelos de regressão para identificar fatores de risco para desfechos negativos, poderiam complementar estes achados.
